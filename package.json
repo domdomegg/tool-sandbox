@@ -1,15 +1,41 @@
 {
-  "name": "typescript-library-template",
+  "name": "tool-sandbox",
   "version": "0.0.0",
-  "description": "Template for creating TypeScript libraries",
+  "description": "Execute untrusted code safely with tool access. Built for AI agents using MCP, Claude, GPT, and other LLMs.",
   "license": "MIT",
   "author": "Adam Jones (domdomegg)",
   "repository": {
     "type": "git",
-    "url": "https://github.com/domdomegg/typescript-library-template.git"
+    "url": "git@github.com:domdomegg/tool-sandbox.git"
   },
+  "keywords": [
+    "sandbox",
+    "code-execution",
+    "mcp",
+    "model-context-protocol",
+    "llm",
+    "ai-agent",
+    "code-interpreter",
+    "quickjs",
+    "tool-use",
+    "wasm",
+    "claude",
+    "openai",
+    "anthropic",
+    "ai"
+  ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp.d.ts",
+      "default": "./dist/mcp.js"
+    }
+  },
   "files": [
     "dist"
   ],
@@ -21,7 +47,11 @@
     "build": "tsc --project tsconfig.build.json",
     "prepublishOnly": "npm run clean && npm run build"
   },
+  "dependencies": {
+    "quickjs-emscripten": "^0.31.0"
+  },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
     "@tsconfig/node-lts": "^22.0.2",
     "eslint": "^9.32.0",
     "eslint-config-domdomegg": "^2.0.9",
