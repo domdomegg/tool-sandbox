@@ -1,6 +1,6 @@
 {
   "name": "tool-sandbox",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Let AI agents write and execute sandboxed code to call tools.",
   "license": "MIT",
   "author": "Adam Jones (domdomegg)",
