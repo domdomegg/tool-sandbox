@@ -1,7 +1,7 @@
 {
   "name": "tool-sandbox",
   "version": "0.0.0",
-  "description": "Execute untrusted code safely with tool access. Built for AI agents using MCP, Claude, GPT, and other LLMs.",
+  "description": "Let AI agents write and execute sandboxed code to call tools.",
   "license": "MIT",
   "author": "Adam Jones (domdomegg)",
   "repository": {
@@ -30,10 +30,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    },
-    "./mcp": {
-      "types": "./dist/mcp.d.ts",
-      "default": "./dist/mcp.js"
     }
   },
   "files": [
@@ -58,6 +54,7 @@
     "eslint-config-domdomegg": "^2.0.9",
     "tsconfig-domdomegg": "^1.0.0",
     "typescript": "^5.8.3",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "zod": "^4.3.5"
   }
 }

@@ -1,5 +1,7 @@
 /** JSON Schema for tool input/output */
 export type JsonSchema = {
+	/** Allow additional JSON Schema fields (additionalProperties, $schema, etc.) */
+	[key: string]: unknown;
 	type: 'object';
 	properties?: Record<string, unknown>;
 	required?: string[];
@@ -7,6 +9,8 @@ export type JsonSchema = {
 
 /** Tool definition - matches MCP SDK Tool interface with handler */
 export type Tool = {
+	/** Allow additional fields (annotations, etc.) */
+	[key: string]: unknown;
 	name: string;
 	title?: string;
 	description?: string;
@@ -19,7 +23,7 @@ export type Tool = {
 export type BeforeToolCallEvent = {
 	toolName: string;
 	args: unknown;
-	/** Set to skip the tool call and return this value instead */
+	/** Mutable - set to skip the tool call and return this value instead */
 	returnValue?: unknown;
 };
 
@@ -29,7 +33,6 @@ export type ToolCallSuccessEvent = {
 	args: unknown;
 	/** Mutable - modify to change the result */
 	result: unknown;
-	duration: number;
 };
 
 /** Event fired after a failed tool call */
@@ -37,8 +40,7 @@ export type ToolCallErrorEvent = {
 	toolName: string;
 	args: unknown;
 	error: Error;
-	duration: number;
-	/** Set to recover and return this instead of throwing */
+	/** Mutable - set to recover and return this instead of throwing */
 	result?: unknown;
 };
 
@@ -48,6 +50,10 @@ export type SandboxOptions = {
 	onBeforeToolCall?: (event: BeforeToolCallEvent) => void;
 	onToolCallSuccess?: (event: ToolCallSuccessEvent) => void;
 	onToolCallError?: (event: ToolCallErrorEvent) => void;
+	/** Max result size in chars before truncation (default: 40000) */
+	experimental_maxResultChars?: number;
+	/** Max poll iterations before timeout, ~100ms each (default: 500) */
+	experimental_maxPollIterations?: number;
 };
 
 /** Result from executing code */
@@ -64,7 +70,11 @@ export type Sandbox = {
 	/** Persistent store - read/write from host and sandbox */
 	store: Record<string, unknown>;
 	/** Tool object for executing code */
-	readonly execute: Tool;
+	readonly execute: Omit<Tool, 'handler'> & {
+		description: string;
+		outputSchema: JsonSchema;
+		handler: (args: {code: string}) => Promise<ExecuteResult>;
+	};
 	/** Add a tool */
 	addTool(tool: Tool): void;
 	/** Remove a tool by name */

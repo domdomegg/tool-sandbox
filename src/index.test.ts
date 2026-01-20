@@ -37,10 +37,7 @@ test('executes simple code', async () => {
 test('calls a tool', async () => {
 	const sandbox = await createSandbox({tools: [addTool]});
 	const result = await sandbox.execute.handler({
-		code: `
-      const sum = await tool('add', { a: 2, b: 3 });
-      return sum;
-    `,
+		code: 'return await tool(\'add\', { a: 2, b: 3 });',
 	});
 	expect(result).toEqual({success: true, result: 5});
 });
@@ -63,24 +60,25 @@ test('calls multiple tools', async () => {
 test('persists store across executions', async () => {
 	const sandbox = await createSandbox({tools: []});
 
-	await sandbox.execute.handler({code: 'store.counter = 1'});
+	await sandbox.execute.handler({code: 'store.counter = 123'});
 	const result = await sandbox.execute.handler({
 		code: `
-      store.counter += 1;
+      store.counter += 42;
       return store.counter;
     `,
 	});
 
-	expect(result).toEqual({success: true, result: 2});
+	expect(result).toEqual({success: true, result: 165});
+	expect(sandbox.store).toEqual({counter: 165});
 });
 
 test('provides _prev with previous result', async () => {
 	const sandbox = await createSandbox({tools: []});
 
 	await sandbox.execute.handler({code: 'return 42'});
-	const result = await sandbox.execute.handler({code: 'return store._prev'});
+	const result = await sandbox.execute.handler({code: 'return store._prev * store._prev;'});
 
-	expect(result).toEqual({success: true, result: 42});
+	expect(result).toEqual({success: true, result: 1764});
 });
 
 test('handles tool not found', async () => {
@@ -118,7 +116,7 @@ test('handles syntax errors', async () => {
 	const sandbox = await createSandbox({tools: []});
 	const result = await sandbox.execute.handler({code: 'return {'});
 	expect(result.success).toBe(false);
-	expect(result.error).toBeDefined();
+	expect(result.error).toMatchInlineSnapshot('"expecting \';\'"');
 });
 
 test('onBeforeToolCall can modify args', async () => {
@@ -224,10 +222,10 @@ test('onToolCallError can recover', async () => {
 	expect(result).toEqual({success: true, result: {recovered: true}});
 });
 
-test('built-in describe tool works', async () => {
+test('built-in describe_tool works', async () => {
 	const sandbox = await createSandbox({tools: [addTool]});
 	const result = await sandbox.execute.handler({
-		code: 'return await tool(\'describe\', { name: \'add\' })',
+		code: 'return await tool(\'describe_tool\', { name: \'add\' })',
 	});
 
 	expect(result.success).toBe(true);
@@ -235,10 +233,10 @@ test('built-in describe tool works', async () => {
 	expect((result.result as {description: string}).description).toBe('Add two numbers');
 });
 
-test('describe returns error for unknown tool', async () => {
+test('describe_tool returns error for unknown tool', async () => {
 	const sandbox = await createSandbox({tools: []});
 	const result = await sandbox.execute.handler({
-		code: 'return await tool(\'describe\', { name: \'unknown\' })',
+		code: 'return await tool(\'describe_tool\', { name: \'unknown\' })',
 	});
 
 	expect(result.success).toBe(true);
@@ -267,6 +265,25 @@ test('removeTool works', async () => {
 	expect(result).toEqual({success: false, error: 'Tool not found: add'});
 });
 
+test('throws on duplicate tool names at creation', async () => {
+	await expect(createSandbox({tools: [addTool, addTool]}))
+		.rejects.toThrow('Duplicate tool name: add');
+});
+
+test('addTool throws on duplicate name', async () => {
+	const sandbox = await createSandbox({tools: [addTool]});
+	expect(() => {
+		sandbox.addTool(addTool);
+	}).toThrow('Duplicate tool name: add');
+});
+
+test('removeTool throws on nonexistent tool', async () => {
+	const sandbox = await createSandbox({tools: []});
+	expect(() => {
+		sandbox.removeTool('nonexistent');
+	}).toThrow('Tool not found: nonexistent');
+});
+
 test('execute tool has correct metadata', async () => {
 	const sandbox = await createSandbox({tools: [addTool]});
 
@@ -277,7 +294,7 @@ test('execute tool has correct metadata', async () => {
 		required: ['code'],
 	});
 	expect(sandbox.execute.description).toContain('add');
-	expect(sandbox.execute.description).toContain('describe');
+	expect(sandbox.execute.description).toContain('describe_tool');
 });
 
 test('console.log works', async () => {
@@ -286,6 +303,52 @@ test('console.log works', async () => {
 
 	await sandbox.execute.handler({code: 'console.log("hello", "world")'});
 
-	expect(consoleSpy).toHaveBeenCalledWith('[sandbox]', 'hello', 'world');
+	expect(consoleSpy).toHaveBeenCalledWith('[tool-sandbox]', 'hello', 'world');
 	consoleSpy.mockRestore();
+});
+
+test('sleep tool works', async () => {
+	const sandbox = await createSandbox({tools: []});
+
+	const start = Date.now();
+	const result = await sandbox.execute.handler({code: 'await tool(\'sleep\', {ms: 50}); return "done";'});
+	const elapsed = Date.now() - start;
+
+	expect(result).toEqual({success: true, result: 'done'});
+	expect(elapsed).toBeGreaterThanOrEqual(45);
+});
+
+test('list_tools works', async () => {
+	const sandbox = await createSandbox({tools: []});
+
+	const result = await sandbox.execute.handler({
+		code: 'return await tool(\'list_tools\', {});',
+	});
+
+	expect(result.success).toBe(true);
+	const toolList = result.result as {name: string}[];
+	expect(toolList.map((t) => t.name)).toContain('describe_tool');
+	expect(toolList.map((t) => t.name)).toContain('list_tools');
+	expect(toolList.map((t) => t.name)).toContain('sleep');
+});
+
+test.each(['fetch', 'require', 'setTimeout', 'setInterval'])('%s is not available in sandbox', async (name) => {
+	const sandbox = await createSandbox({tools: []});
+	const result = await sandbox.execute.handler({code: `return typeof ${name}`});
+	expect(result).toEqual({success: true, result: 'undefined'});
+});
+
+test('dynamic import is not available in sandbox', async () => {
+	const sandbox = await createSandbox({tools: []});
+	const result = await sandbox.execute.handler({code: 'return import("foo")'});
+	expect(result.success).toBe(false);
+});
+
+test('sandbox.store can be set from host', async () => {
+	const sandbox = await createSandbox({tools: []});
+
+	sandbox.store = {preset: 'adam'};
+	const result = await sandbox.execute.handler({code: 'return store.preset'});
+
+	expect(result).toEqual({success: true, result: 'adam'});
 });
