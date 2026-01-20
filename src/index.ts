@@ -19,75 +19,79 @@ export type {
 	ToolCallErrorEvent,
 } from './types.js';
 
+export {fromMcpClients, type McpClients} from './mcp.js';
+
 // Lazy-loaded QuickJS instance
 let quickJS: Awaited<ReturnType<typeof getQuickJS>> | null = null;
 
-/** Maximum result size in characters before truncation */
-const MAX_RESULT_CHARS = 40000;
+/** Default maximum result size in characters before truncation */
+const DEFAULT_maxResultChars = 40000;
 
-/** Maximum execution time (~50 seconds) */
-const MAX_POLL_ITERATIONS = 500;
+/** Default maximum execution time (~50 seconds) */
+const DEFAULT_MAX_POLL_ITERATIONS = 500;
 
 /** Generate the execute tool description */
 function generateExecuteDescription(toolNames: string[]): string {
 	return `Run JavaScript in a sandboxed environment.
 
-## Available APIs
+Available: tool(name, args), console.log(), store (persistent), store._prev (last result)
 
-- \`tool(name, args)\` - Call a tool and await its result
-- \`console.log(...)\` - Debug output
-- \`store\` - Persistent object that survives across executions
-- \`store._prev\` - Read-only result from previous execution
+IMPORTANT: Call tool('describe_tool', {name}) to get a tool's schema before using it. Do not guess schemas.
 
-Note: \`tool('describe', { name: 'toolName' })\` returns a tool's schema.
+Available tools: ${toolNames.join(', ')}
 
-## Available tools
+Example (placeholder tool names - use describe_tool for actual schemas):
 
-${toolNames.join(', ')}
+USER: What's on my on-call calendars in the next 24 hours?
 
-## Patterns
+// Execution 1: Get schema first
+return await tool('describe_tool', {name: 'calendar__list'});
 
-### Sequential tool calls
-\`\`\`javascript
-const users = await tool('api__getUsers', {});
-const enriched = await Promise.all(
-  users.map(u => tool('api__enrich', { id: u.id }))
-);
-return enriched;
-\`\`\`
+// Execution 2: Fetch calendars, filter, get events, store and return count
+const calendars = await tool('calendar__list', {});
+const eventArrays = await Promise.all(calendars.map(cal =>
+  tool('calendar__events', {calendarId: cal.id, timeMin: new Date().toISOString(), timeMax: new Date(Date.now() + 86400000).toISOString()})
+));
+store.events = eventArrays.flat();
+return {count: store.events.length};
 
-### Storing intermediate results
-\`\`\`javascript
-store.users = await tool('api__getUsers', {});
-return store.users.length;
-\`\`\`
+USER: Which of those are standups?
 
-### Error handling
-\`\`\`javascript
-try {
-  return await tool('api__riskyCall', {});
-} catch (err) {
-  return { error: err.message, fallback: 'default' };
-}
-\`\`\`
+// Execution 3: Work with stored events, return summary
+const standups = store.events.filter(e => e.title.includes('standup'));
+return {count: standups.length, titles: standups.map(e => e.title)};
 
-## Limitations
+USER: Any of those for tool-sandbox?
 
-- No \`fetch\`, \`require\`, \`import\` (use tools instead)
-- No \`setTimeout\`/\`setInterval\`
-- Results over 40KB are truncated
-- Execution times out after ~50 seconds`;
+// Execution 4: Filter previous result
+return store._prev.titles.filter(t => t.includes('tool-sandbox'));
+
+Style: Keep code short and simple. No comments or error handling needed. Return summaries rather than large objects.
+
+Limitations: No fetch/require/import/setTimeout/setInterval (use tools instead).`;
 }
 
 /** Create a sandbox instance */
 export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 	const tools = [...options.tools];
+	const maxResultChars = options.experimental_maxResultChars ?? DEFAULT_maxResultChars;
+	const maxPollIterations = options.experimental_maxPollIterations ?? DEFAULT_MAX_POLL_ITERATIONS;
 	let store: Record<string, unknown> = {};
 	let prevResult: unknown;
 
+	// Validate no duplicate tool names
+	const names = new Set<string>();
+	for (const tool of tools) {
+		if (names.has(tool.name)) {
+			throw new Error(`Duplicate tool name: ${tool.name}`);
+		}
+
+		names.add(tool.name);
+	}
+
 	// Add built-in describe tool
 	const describeTool: Tool = {
-		name: 'describe',
+		name: 'describe_tool',
 		description: 'Get a tool\'s schema by name',
 		inputSchema: {
 			type: 'object',
@@ -111,6 +115,32 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 	};
 	tools.push(describeTool);
 
+	// Add built-in list_tools tool
+	const listToolsTool: Tool = {
+		name: 'list_tools',
+		description: 'List all available tools',
+		inputSchema: {type: 'object', properties: {}},
+		async handler() {
+			return tools.map((t) => ({name: t.name, description: t.description}));
+		},
+	};
+	tools.push(listToolsTool);
+
+	// Add built-in sleep tool
+	const sleepTool: Tool = {
+		name: 'sleep',
+		description: 'Wait for the specified number of milliseconds',
+		inputSchema: {type: 'object', properties: {ms: {type: 'number'}}, required: ['ms']},
+		async handler(args) {
+			const {ms} = args as {ms: number};
+			await new Promise((resolve) => {
+				setTimeout(resolve, ms);
+			});
+			return {slept: ms};
+		},
+	};
+	tools.push(sleepTool);
+
 	// Execute code in the sandbox
 	async function executeCode(code: string): Promise<ExecuteResult> {
 		quickJS ||= await getQuickJS();
@@ -126,7 +156,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 					const val = vm.dump(h);
 					return typeof val === 'string' ? val : JSON.stringify(val);
 				});
-				console.log('[sandbox]', ...strings);
+				console.log('[tool-sandbox]', ...strings);
 			});
 			vm.setProp(consoleObj, 'log', logFn);
 			vm.setProp(vm.global, 'console', consoleObj);
@@ -168,7 +198,6 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 				const promise = vm.newPromise();
 
 				const asyncWork = (async () => {
-					const startTime = Date.now();
 					const tool = tools.find((t) => t.name === toolName);
 
 					if (!tool) {
@@ -197,12 +226,10 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 
 					// Check if returnValue was set
 					if ('returnValue' in beforeEvent) {
-						const duration = Date.now() - startTime;
 						const successEvent: ToolCallSuccessEvent = {
 							toolName,
 							args,
 							result: beforeEvent.returnValue,
-							duration,
 						};
 						options.onToolCallSuccess?.(successEvent);
 
@@ -227,10 +254,9 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 					// Call the tool with potentially modified args
 					try {
 						const result = await tool.handler(beforeEvent.args);
-						const duration = Date.now() - startTime;
 
 						const successEvent: ToolCallSuccessEvent = {
-							toolName, args, result, duration,
+							toolName, args, result,
 						};
 						options.onToolCallSuccess?.(successEvent);
 
@@ -250,11 +276,10 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 							vm.runtime.executePendingJobs();
 						});
 					} catch (err) {
-						const duration = Date.now() - startTime;
 						const error = err instanceof Error ? err : new Error(String(err));
 
 						const errorEvent: ToolCallErrorEvent = {
-							toolName, args, error, duration,
+							toolName, args, error,
 						};
 						options.onToolCallError?.(errorEvent);
 
@@ -328,7 +353,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 				promiseState = vm.getPromiseState(promiseHandle);
 				pollIterations += 1;
 
-				if (pollIterations >= MAX_POLL_ITERATIONS) {
+				if (pollIterations >= maxPollIterations) {
 					promiseHandle.dispose();
 					storeHandle.dispose();
 					return {success: false, error: 'Execution timed out'};
@@ -349,11 +374,11 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 
 				// Truncate if needed
 				const resultStr = JSON.stringify(value) ?? '';
-				if (resultStr.length > MAX_RESULT_CHARS) {
+				if (resultStr.length > maxResultChars) {
 					return {
 						success: true,
 						result: value,
-						error: `Result truncated (${resultStr.length} > ${MAX_RESULT_CHARS} chars)`,
+						error: `Result truncated (${resultStr.length} > ${maxResultChars} chars)`,
 					};
 				}
 
@@ -380,13 +405,22 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 	}
 
 	// Create execute tool
-	const executeTool: Tool = {
+	const executeTool: Sandbox['execute'] = {
 		name: 'execute',
 		description: generateExecuteDescription(tools.map((t) => t.name)),
 		inputSchema: {
 			type: 'object',
 			properties: {code: {type: 'string', description: 'JavaScript code to execute'}},
 			required: ['code'],
+		},
+		outputSchema: {
+			type: 'object',
+			properties: {
+				success: {type: 'boolean'},
+				result: {description: 'Return value from the executed code'},
+				error: {type: 'string', description: 'Error message if execution failed'},
+			},
+			required: ['success'],
 		},
 		async handler(args) {
 			const {code} = args as {code: string};
@@ -395,22 +429,30 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 	};
 
 	const sandbox: Sandbox = {
-		get tools() {
-			return tools;
+		tools,
+		get store() {
+			return store;
 		},
-		store,
+		set store(value) {
+			store = value;
+		},
 		execute: executeTool,
 		addTool(tool: Tool) {
+			if (tools.some((t) => t.name === tool.name)) {
+				throw new Error(`Duplicate tool name: ${tool.name}`);
+			}
+
 			tools.push(tool);
-			// Update execute tool description
 			executeTool.description = generateExecuteDescription(tools.map((t) => t.name));
 		},
 		removeTool(name: string) {
 			const index = tools.findIndex((t) => t.name === name);
-			if (index !== -1) {
-				tools.splice(index, 1);
-				executeTool.description = generateExecuteDescription(tools.map((t) => t.name));
+			if (index === -1) {
+				throw new Error(`Tool not found: ${name}`);
 			}
+
+			tools.splice(index, 1);
+			executeTool.description = generateExecuteDescription(tools.map((t) => t.name));
 		},
 	};
 
