@@ -2,6 +2,8 @@
 
 Library for executing code and calling tools in a sandbox. Particularly useful for letting AI agents write and execute code, following [the code execution pattern for AI agents](https://www.anthropic.com/engineering/code-execution-with-mcp).
 
+https://github.com/user-attachments/assets/d2f45db4-0861-489a-98cf-675490176fdc
+
 ## Why?
 
 When agents call tools directly, every tool definition and intermediate result flows through the context window. This gets expensive fast.
