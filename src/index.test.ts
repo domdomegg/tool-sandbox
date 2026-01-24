@@ -338,10 +338,105 @@ test.each(['fetch', 'require', 'setTimeout', 'setInterval'])('%s is not availabl
 	expect(result).toEqual({success: true, result: 'undefined'});
 });
 
+test('sandbox has expected globals', async () => {
+	const sandbox = await createSandbox({tools: []});
+	const result = await sandbox.execute.handler({
+		code: `
+			const names = Object.getOwnPropertyNames(globalThis).sort();
+			return Object.fromEntries(names.map(n => [n, typeof globalThis[n]]));
+		`,
+	});
+	expect(result.success).toBe(true);
+	expect(result.result).toMatchInlineSnapshot(`
+		{
+		  "AggregateError": "function",
+		  "Array": "function",
+		  "ArrayBuffer": "function",
+		  "BigInt": "function",
+		  "BigInt64Array": "function",
+		  "BigUint64Array": "function",
+		  "Boolean": "function",
+		  "DataView": "function",
+		  "Date": "function",
+		  "Error": "function",
+		  "EvalError": "function",
+		  "Float32Array": "function",
+		  "Float64Array": "function",
+		  "Function": "function",
+		  "Infinity": "number",
+		  "Int16Array": "function",
+		  "Int32Array": "function",
+		  "Int8Array": "function",
+		  "InternalError": "function",
+		  "JSON": "object",
+		  "Map": "function",
+		  "Math": "object",
+		  "NaN": "number",
+		  "Number": "function",
+		  "Object": "function",
+		  "Promise": "function",
+		  "Proxy": "function",
+		  "RangeError": "function",
+		  "ReferenceError": "function",
+		  "Reflect": "object",
+		  "RegExp": "function",
+		  "Set": "function",
+		  "SharedArrayBuffer": "function",
+		  "String": "function",
+		  "Symbol": "function",
+		  "SyntaxError": "function",
+		  "TypeError": "function",
+		  "URIError": "function",
+		  "Uint16Array": "function",
+		  "Uint32Array": "function",
+		  "Uint8Array": "function",
+		  "Uint8ClampedArray": "function",
+		  "WeakMap": "function",
+		  "WeakSet": "function",
+		  "atob": "function",
+		  "btoa": "function",
+		  "console": "object",
+		  "decodeURI": "function",
+		  "decodeURIComponent": "function",
+		  "encodeURI": "function",
+		  "encodeURIComponent": "function",
+		  "escape": "function",
+		  "eval": "function",
+		  "globalThis": "object",
+		  "isFinite": "function",
+		  "isNaN": "function",
+		  "parseFloat": "function",
+		  "parseInt": "function",
+		  "store": "object",
+		  "tool": "function",
+		  "undefined": "undefined",
+		  "unescape": "function",
+		}
+	`);
+});
+
 test('dynamic import is not available in sandbox', async () => {
 	const sandbox = await createSandbox({tools: []});
 	const result = await sandbox.execute.handler({code: 'return import("foo")'});
 	expect(result.success).toBe(false);
+});
+
+test('atob decodes base64', async () => {
+	const sandbox = await createSandbox({tools: []});
+	const result = await sandbox.execute.handler({code: 'return atob("SGVsbG8gV29ybGQ=")'});
+	expect(result).toEqual({success: true, result: 'Hello World'});
+});
+
+test('btoa encodes to base64', async () => {
+	const sandbox = await createSandbox({tools: []});
+	const result = await sandbox.execute.handler({code: 'return btoa("Hello World")'});
+	expect(result).toEqual({success: true, result: 'SGVsbG8gV29ybGQ='});
+});
+
+test('atob and btoa roundtrip', async () => {
+	const sandbox = await createSandbox({tools: []});
+	const result = await sandbox.execute.handler({code: 'return atob(btoa("test string 123"))'});
+	expect(result).toEqual({success: true, result: 'test string 123'});
 });
 
 test('sandbox.store can be set from host', async () => {

@@ -34,7 +34,7 @@ const DEFAULT_MAX_POLL_ITERATIONS = 500;
 function generateExecuteDescription(toolNames: string[]): string {
 	return `Run JavaScript in a sandboxed environment.
 
-Available: tool(name, args), console.log(), store (persistent), store._prev (last result)
+Available: tool(name, args), store (persistent), store._prev (last result), console.log, atob/btoa, and standard JS built-ins (JSON, Math, Date, Promise, etc.)
 
 IMPORTANT: Call tool('describe_tool', {name}) to get a tool's schema before using it. Do not guess schemas.
 
@@ -162,6 +162,21 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 			vm.setProp(vm.global, 'console', consoleObj);
 			logFn.dispose();
 			consoleObj.dispose();
+
+			// Add atob/btoa for base64 encoding/decoding
+			const atobFn = vm.newFunction('atob', (strHandle) => {
+				const str = vm.getString(strHandle);
+				return vm.newString(Buffer.from(str, 'base64').toString('utf8'));
+			});
+			vm.setProp(vm.global, 'atob', atobFn);
+			atobFn.dispose();
+
+			const btoaFn = vm.newFunction('btoa', (strHandle) => {
+				const str = vm.getString(strHandle);
+				return vm.newString(Buffer.from(str, 'utf8').toString('base64'));
+			});
+			vm.setProp(vm.global, 'btoa', btoaFn);
+			btoaFn.dispose();
 
 			// Initialize store with _prev as read-only
 			const prevJson = JSON.stringify(prevResult ?? null);
