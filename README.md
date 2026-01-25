@@ -403,9 +403,9 @@ Code in the sandbox has access to:
 | API | Description |
 |-----|-------------|
 | `tool(name, args)` | Call a tool and await its result |
-| `console.log(...)` | Debug output (visible to host) |
 | `store` | Persistent object across executions |
 | `store._prev` | Result from previous execution (read-only) |
+| Built-ins | `console.log`, `atob/btoa`, and standard JS built-ins (`JSON`, `Math`, `Date`, `Promise`, etc.). No `fetch`, `require`, `setTimeout`, `setInterval`, or `import`. |
 
 Examples:
 
