@@ -422,6 +422,57 @@ const _examples = [
 ];
 ```
 
+## Blob Handling
+
+Binary data (images, audio, PDFs) from tools is automatically extracted to avoid sending large base64 strings through the model's context. Tool results containing these formats are replaced with refs:
+
+```typescript
+// Tool returns: {type: 'image', data: 'iVBORw0KGgo...', mimeType: 'image/png'}
+// Sandbox code sees: {type: 'blob_ref', id: 'blob_k7m2x9', mimeType: 'image/png'}
+```
+
+The actual blob data is returned separately in `ExecuteResult.blobs`:
+
+```typescript
+const result = await sandbox.execute.handler({code});
+// result.blobs = [{id: 'blob_k7m2x9', data: 'iVBORw0KGgo...', mimeType: 'image/png'}]
+```
+
+This lets you convert blobs to native content blocks when sending to the model:
+
+```typescript
+const result = await sandbox.execute.handler(block.input);
+
+// Convert blobs to image content blocks for the model
+const content: Anthropic.ToolResultBlockParam['content'] = [
+  {type: 'text', text: JSON.stringify({success: result.success, result: result.result})},
+  ...result.blobs
+    .filter(b => b.mimeType.startsWith('image/'))
+    .map(b => ({
+      type: 'image' as const,
+      source: {type: 'base64' as const, media_type: b.mimeType, data: b.data},
+    })),
+];
+
+toolResults.push({type: 'tool_result', tool_use_id: block.id, content});
+```
+
+**Extractable formats:**
+- MCP image/audio content: `{type: 'image'|'audio', data: string, mimeType: string}`
+- MCP resource blobs: `{blob: string, mimeType: string}` (PDFs, etc.)
+
+**Accessing raw data in sandbox code:**
+
+If your code needs the raw base64 data (e.g., to manipulate an image before passing to another tool), use `get_blob`:
+
+```typescript
+const ref = await tool('screenshot', {});
+const blob = await tool('get_blob', {id: ref.id});
+// blob = {id: 'blob_k7m2x9', data: 'iVBORw0KGgo...', mimeType: 'image/png'}
+```
+
+Note: Blobs are cleared between executions. If you need blob data across executions, save the data itself (not just the ref) to `store`.
+
 ## Permissions
 
 A couple ways to control what the sandbox can do:
@@ -678,6 +729,27 @@ const sandbox = await createSandbox({
 | `store` | Persistent store, shared with sandbox code |
 | `addTool(tool)` | Add a tool at runtime |
 | `removeTool(name)` | Remove a tool by name |
+
+### ExecuteResult
+
+Returned by `sandbox.execute.handler({code})`:
+
+| Property | Description |
+|----------|-------------|
+| `success` | `boolean` — Whether execution completed without error |
+| `result` | Return value from the executed code (if successful) |
+| `error` | `string` — Error message (if failed) |
+| `blobs` | `Blob[]` — Extracted binary data from tool results (see [Blob Handling](#blob-handling)) |
+
+### Blob
+
+```typescript
+type Blob = {
+  id: string;      // e.g., 'blob_k7m2x9'
+  data: string;    // base64-encoded content
+  mimeType: string; // e.g., 'image/png', 'audio/wav', 'application/pdf'
+};
+```
 
 ### Tool
 

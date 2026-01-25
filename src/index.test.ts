@@ -31,7 +31,7 @@ const echoTool: Tool = {
 test('executes simple code', async () => {
 	const sandbox = await createSandbox({tools: []});
 	const result = await sandbox.execute.handler({code: 'return 1 + 1'});
-	expect(result).toEqual({success: true, result: 2});
+	expect(result).toEqual({success: true, blobs: [], result: 2});
 });
 
 test('calls a tool', async () => {
@@ -39,7 +39,7 @@ test('calls a tool', async () => {
 	const result = await sandbox.execute.handler({
 		code: 'return await tool(\'add\', { a: 2, b: 3 });',
 	});
-	expect(result).toEqual({success: true, result: 5});
+	expect(result).toEqual({success: true, blobs: [], result: 5});
 });
 
 test('calls multiple tools', async () => {
@@ -53,6 +53,7 @@ test('calls multiple tools', async () => {
 	});
 	expect(result).toEqual({
 		success: true,
+		blobs: [],
 		result: {sum: 30, echo: {echoed: 'hello'}},
 	});
 });
@@ -68,7 +69,7 @@ test('persists store across executions', async () => {
     `,
 	});
 
-	expect(result).toEqual({success: true, result: 165});
+	expect(result).toEqual({success: true, blobs: [], result: 165});
 	expect(sandbox.store).toEqual({counter: 165});
 });
 
@@ -78,7 +79,7 @@ test('provides _prev with previous result', async () => {
 	await sandbox.execute.handler({code: 'return 42'});
 	const result = await sandbox.execute.handler({code: 'return store._prev * store._prev;'});
 
-	expect(result).toEqual({success: true, result: 1764});
+	expect(result).toEqual({success: true, blobs: [], result: 1764});
 });
 
 test('handles tool not found', async () => {
@@ -88,6 +89,7 @@ test('handles tool not found', async () => {
 	});
 	expect(result).toEqual({
 		success: false,
+		blobs: [],
 		error: 'Tool not found: nonexistent',
 	});
 });
@@ -108,6 +110,7 @@ test('handles tool errors', async () => {
 	});
 	expect(result).toEqual({
 		success: false,
+		blobs: [],
 		error: 'Intentional failure',
 	});
 });
@@ -163,7 +166,7 @@ test('onBeforeToolCall can short-circuit with returnValue', async () => {
 	});
 
 	expect(handler).not.toHaveBeenCalled();
-	expect(result).toEqual({success: true, result: {cached: true}});
+	expect(result).toEqual({success: true, blobs: [], result: {cached: true}});
 });
 
 test('onBeforeToolCall can block with error', async () => {
@@ -180,7 +183,7 @@ test('onBeforeToolCall can block with error', async () => {
 		code: 'return await tool(\'add\', { a: 1, b: 2 })',
 	});
 
-	expect(result).toEqual({success: false, error: 'Blocked'});
+	expect(result).toEqual({success: false, blobs: [], error: 'Blocked'});
 });
 
 test('onToolCallSuccess can modify result', async () => {
@@ -195,7 +198,7 @@ test('onToolCallSuccess can modify result', async () => {
 		code: 'return await tool(\'add\', { a: 1, b: 2 })',
 	});
 
-	expect(result).toEqual({success: true, result: 30});
+	expect(result).toEqual({success: true, blobs: [], result: 30});
 });
 
 test('onToolCallError can recover', async () => {
@@ -219,7 +222,7 @@ test('onToolCallError can recover', async () => {
 		code: 'return await tool(\'fail\', {})',
 	});
 
-	expect(result).toEqual({success: true, result: {recovered: true}});
+	expect(result).toEqual({success: true, blobs: [], result: {recovered: true}});
 });
 
 test('built-in describe_tool works', async () => {
@@ -251,7 +254,7 @@ test('addTool works', async () => {
 		code: 'return await tool(\'add\', { a: 5, b: 7 })',
 	});
 
-	expect(result).toEqual({success: true, result: 12});
+	expect(result).toEqual({success: true, blobs: [], result: 12});
 });
 
 test('removeTool works', async () => {
@@ -262,7 +265,7 @@ test('removeTool works', async () => {
 		code: 'return await tool(\'add\', { a: 1, b: 1 })',
 	});
 
-	expect(result).toEqual({success: false, error: 'Tool not found: add'});
+	expect(result).toEqual({success: false, blobs: [], error: 'Tool not found: add'});
 });
 
 test('throws on duplicate tool names at creation', async () => {
@@ -314,7 +317,7 @@ test('sleep tool works', async () => {
 	const result = await sandbox.execute.handler({code: 'await tool(\'sleep\', {ms: 50}); return "done";'});
 	const elapsed = Date.now() - start;
 
-	expect(result).toEqual({success: true, result: 'done'});
+	expect(result).toEqual({success: true, blobs: [], result: 'done'});
 	expect(elapsed).toBeGreaterThanOrEqual(45);
 });
 
@@ -330,12 +333,13 @@ test('list_tools works', async () => {
 	expect(toolList.map((t) => t.name)).toContain('describe_tool');
 	expect(toolList.map((t) => t.name)).toContain('list_tools');
 	expect(toolList.map((t) => t.name)).toContain('sleep');
+	expect(toolList.map((t) => t.name)).toContain('get_blob');
 });
 
 test.each(['fetch', 'require', 'setTimeout', 'setInterval'])('%s is not available in sandbox', async (name) => {
 	const sandbox = await createSandbox({tools: []});
 	const result = await sandbox.execute.handler({code: `return typeof ${name}`});
-	expect(result).toEqual({success: true, result: 'undefined'});
+	expect(result).toEqual({success: true, blobs: [], result: 'undefined'});
 });
 
 test('sandbox has expected globals', async () => {
@@ -424,19 +428,19 @@ test('dynamic import is not available in sandbox', async () => {
 test('atob decodes base64', async () => {
 	const sandbox = await createSandbox({tools: []});
 	const result = await sandbox.execute.handler({code: 'return atob("SGVsbG8gV29ybGQ=")'});
-	expect(result).toEqual({success: true, result: 'Hello World'});
+	expect(result).toEqual({success: true, blobs: [], result: 'Hello World'});
 });
 
 test('btoa encodes to base64', async () => {
 	const sandbox = await createSandbox({tools: []});
 	const result = await sandbox.execute.handler({code: 'return btoa("Hello World")'});
-	expect(result).toEqual({success: true, result: 'SGVsbG8gV29ybGQ='});
+	expect(result).toEqual({success: true, blobs: [], result: 'SGVsbG8gV29ybGQ='});
 });
 
 test('atob and btoa roundtrip', async () => {
 	const sandbox = await createSandbox({tools: []});
 	const result = await sandbox.execute.handler({code: 'return atob(btoa("test string 123"))'});
-	expect(result).toEqual({success: true, result: 'test string 123'});
+	expect(result).toEqual({success: true, blobs: [], result: 'test string 123'});
 });
 
 test('sandbox.store can be set from host', async () => {
@@ -445,5 +449,146 @@ test('sandbox.store can be set from host', async () => {
 	sandbox.store = {preset: 'adam'};
 	const result = await sandbox.execute.handler({code: 'return store.preset'});
 
-	expect(result).toEqual({success: true, result: 'adam'});
+	expect(result).toEqual({success: true, blobs: [], result: 'adam'});
+});
+
+test('blob extraction works for image content', async () => {
+	const imageTool: Tool = {
+		name: 'screenshot',
+		description: 'Returns a fake image',
+		inputSchema: {type: 'object'},
+		async handler() {
+			return {type: 'image', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ', mimeType: 'image/png'};
+		},
+	};
+
+	const sandbox = await createSandbox({tools: [imageTool]});
+	const result = await sandbox.execute.handler({
+		code: 'return await tool(\'screenshot\', {})',
+	});
+
+	expect(result.success).toBe(true);
+	// Result should have the ref, not the full data
+	const ref = result.result as {type: string; id: string; mimeType: string};
+	expect(ref.type).toBe('blob_ref');
+	expect(ref.id).toMatch(/^blob_[a-z0-9]{6}$/);
+	expect(ref.mimeType).toBe('image/png');
+	// Blob should be extracted
+	expect(result.blobs).toHaveLength(1);
+	expect(result.blobs[0].id).toBe(ref.id);
+	expect(result.blobs[0].data).toBe('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ');
+	expect(result.blobs[0].mimeType).toBe('image/png');
+});
+
+test('get_blob tool retrieves extracted blob data', async () => {
+	const imageTool: Tool = {
+		name: 'screenshot',
+		description: 'Returns a fake image',
+		inputSchema: {type: 'object'},
+		async handler() {
+			return {type: 'image', data: 'base64data1234567890abcdef', mimeType: 'image/jpeg'};
+		},
+	};
+
+	const sandbox = await createSandbox({tools: [imageTool]});
+	const result = await sandbox.execute.handler({
+		code: `
+			const ref = await tool('screenshot', {});
+			const blob = await tool('get_blob', {id: ref.id});
+			return {ref, blob};
+		`,
+	});
+
+	expect(result.success).toBe(true);
+	const res = result.result as {ref: {id: string}; blob: {id: string; data: string; mimeType: string}};
+	expect(res.ref.id).toMatch(/^blob_[a-z0-9]{6}$/);
+	expect(res.blob.data).toBe('base64data1234567890abcdef');
+	expect(res.blob.mimeType).toBe('image/jpeg');
+});
+
+test('get_blob returns error for unknown id', async () => {
+	const sandbox = await createSandbox({tools: []});
+	const result = await sandbox.execute.handler({
+		code: 'return await tool(\'get_blob\', {id: \'nonexistent\'})',
+	});
+
+	expect(result.success).toBe(true);
+	expect((result.result as {error: string}).error).toBe('Blob not found: nonexistent');
+});
+
+test('multiple blobs are extracted from nested results', async () => {
+	const imageTool: Tool = {
+		name: 'screenshot',
+		description: 'Returns a fake image',
+		inputSchema: {type: 'object'},
+		async handler() {
+			return [{type: 'text', text: 'dimensions'}, {type: 'image', data: 'imagedatabase64encodedstring', mimeType: 'image/png'}];
+		},
+	};
+
+	const sandbox = await createSandbox({tools: [imageTool]});
+	const result = await sandbox.execute.handler({
+		code: `
+			const ss1 = await tool('screenshot', {});
+			const ss2 = await tool('screenshot', {});
+			return {screenshots: [ss1, ss2]};
+		`,
+	});
+
+	expect(result.success).toBe(true);
+	expect(result.blobs).toHaveLength(2);
+	expect(result.blobs[0].id).toMatch(/^blob_[a-z0-9]{6}$/);
+	expect(result.blobs[1].id).toMatch(/^blob_[a-z0-9]{6}$/);
+	// IDs should be unique
+	expect(result.blobs[0].id).not.toBe(result.blobs[1].id);
+});
+
+test('blob extraction works for audio content', async () => {
+	const audioTool: Tool = {
+		name: 'record',
+		description: 'Returns fake audio',
+		inputSchema: {type: 'object'},
+		async handler() {
+			return {type: 'audio', data: 'UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAA', mimeType: 'audio/wav'};
+		},
+	};
+
+	const sandbox = await createSandbox({tools: [audioTool]});
+	const result = await sandbox.execute.handler({
+		code: 'return await tool(\'record\', {})',
+	});
+
+	expect(result.success).toBe(true);
+	const ref = result.result as {type: string; id: string; mimeType: string};
+	expect(ref.type).toBe('blob_ref');
+	expect(ref.id).toMatch(/^blob_[a-z0-9]{6}$/);
+	expect(ref.mimeType).toBe('audio/wav');
+	expect(result.blobs).toHaveLength(1);
+	expect(result.blobs[0].data).toBe('UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAA');
+	expect(result.blobs[0].mimeType).toBe('audio/wav');
+});
+
+test('blob extraction works for resource blobs (PDFs)', async () => {
+	const pdfTool: Tool = {
+		name: 'export_pdf',
+		description: 'Returns a fake PDF',
+		inputSchema: {type: 'object'},
+		async handler() {
+			return {blob: 'JVBERi0xLjQKJeLjz9MKMSAwIG9iag', mimeType: 'application/pdf'};
+		},
+	};
+
+	const sandbox = await createSandbox({tools: [pdfTool]});
+	const result = await sandbox.execute.handler({
+		code: 'return await tool(\'export_pdf\', {})',
+	});
+
+	expect(result.success).toBe(true);
+	const ref = result.result as {type: string; id: string; mimeType: string};
+	expect(ref.type).toBe('blob_ref');
+	expect(ref.id).toMatch(/^blob_[a-z0-9]{6}$/);
+	expect(ref.mimeType).toBe('application/pdf');
+	expect(result.blobs).toHaveLength(1);
+	expect(result.blobs[0].data).toBe('JVBERi0xLjQKJeLjz9MKMSAwIG9iag');
+	expect(result.blobs[0].mimeType).toBe('application/pdf');
 });

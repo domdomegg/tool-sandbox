@@ -108,7 +108,7 @@ test('MCP tool with structuredContent can be called from sandbox', async () => {
 	});
 
 	// structuredContent is preferred by extractContent
-	expect(result).toEqual({success: true, result: {sum: 8}});
+	expect(result).toEqual({success: true, blobs: [], result: {sum: 8}});
 });
 
 test('MCP tool returning text can be called from sandbox', async () => {
@@ -120,7 +120,7 @@ test('MCP tool returning text can be called from sandbox', async () => {
 		code: 'return await tool(\'test__greet\', {name: \'Alice\'});',
 	});
 
-	expect(result).toEqual({success: true, result: 'Hello, Alice!'});
+	expect(result).toEqual({success: true, blobs: [], result: 'Hello, Alice!'});
 });
 
 test('MCP prompt can be called from sandbox', async () => {
