@@ -56,11 +56,20 @@ export type SandboxOptions = {
 	experimental_maxPollIterations?: number;
 };
 
+/** Blob content extracted from tool results (images, PDFs, etc.) */
+export type Blob = {
+	id: string;
+	data: string;
+	mimeType: string;
+};
+
 /** Result from executing code */
 export type ExecuteResult = {
 	success: boolean;
 	result?: unknown;
 	error?: string;
+	/** Blobs extracted from tool results during execution */
+	blobs: Blob[];
 };
 
 /** Sandbox instance */

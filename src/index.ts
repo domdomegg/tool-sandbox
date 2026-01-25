@@ -7,6 +7,7 @@ import type {
 	BeforeToolCallEvent,
 	ToolCallSuccessEvent,
 	ToolCallErrorEvent,
+	Blob,
 } from './types.js';
 
 export type {
@@ -17,12 +18,64 @@ export type {
 	BeforeToolCallEvent,
 	ToolCallSuccessEvent,
 	ToolCallErrorEvent,
+	Blob,
 } from './types.js';
 
 export {fromMcpClients, type McpClients} from './mcp.js';
 
 // Lazy-loaded QuickJS instance
 let quickJS: Awaited<ReturnType<typeof getQuickJS>> | null = null;
+
+/** Generate a short random ID for blobs (e.g., 'blob_k7m2x9') */
+function generateBlobId(): string {
+	const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+	let suffix = '';
+	for (let i = 0; i < 6; i++) {
+		suffix += chars[Math.floor(Math.random() * chars.length)];
+	}
+
+	return `blob_${suffix}`;
+}
+
+/** Extract blobs from a value, replacing them with refs */
+function extractBlobs(
+	value: unknown,
+	blobStore: Map<string, Blob>,
+): unknown {
+	if (typeof value === 'object' && value !== null) {
+		const v = value as Record<string, unknown>;
+
+		// MCP image/audio content: {type: 'image'|'audio', data: string, mimeType: string}
+		if ((v.type === 'image' || v.type === 'audio') && typeof v.data === 'string' && typeof v.mimeType === 'string') {
+			const id = generateBlobId();
+			const blob: Blob = {id, data: v.data, mimeType: v.mimeType};
+			blobStore.set(id, blob);
+			return {type: 'blob_ref', id, mimeType: v.mimeType};
+		}
+
+		// MCP resource blob (PDFs, etc.): {blob: string, mimeType: string}
+		if (typeof v.blob === 'string' && typeof v.mimeType === 'string') {
+			const id = generateBlobId();
+			const blob: Blob = {id, data: v.blob, mimeType: v.mimeType};
+			blobStore.set(id, blob);
+			return {type: 'blob_ref', id, mimeType: v.mimeType};
+		}
+
+		// Recurse into arrays and objects
+		if (Array.isArray(value)) {
+			return value.map((item) => extractBlobs(item, blobStore));
+		}
+
+		const result: Record<string, unknown> = {};
+		for (const [k, val] of Object.entries(v)) {
+			result[k] = extractBlobs(val, blobStore);
+		}
+
+		return result;
+	}
+
+	return value;
+}
 
 /** Default maximum result size in characters before truncation */
 const DEFAULT_maxResultChars = 40000;
@@ -35,6 +88,8 @@ function generateExecuteDescription(toolNames: string[]): string {
 	return `Run JavaScript in a sandboxed environment.
 
 Available: tool(name, args), store (persistent), store._prev (last result), console.log, atob/btoa, and standard JS built-ins (JSON, Math, Date, Promise, etc.)
+
+Binary data (images, audio, PDFs) from tools is automatically extracted. Tool results containing these will have the data replaced with refs like {type: 'blob_ref', id: 'blob_k7m2x9', mimeType: 'image/png'}. The actual content is returned separately. If you need the raw base64 data (e.g., to crop, resize, or pass to another tool), use tool('get_blob', {id}) which returns {id, data, mimeType}. Note: blobs are only available within the same execution - save to store if needed later.
 
 IMPORTANT: Call tool('describe_tool', {name}) to get a tool's schema before using it. Do not guess schemas.
 
@@ -78,6 +133,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 	const maxPollIterations = options.experimental_maxPollIterations ?? DEFAULT_MAX_POLL_ITERATIONS;
 	let store: Record<string, unknown> = {};
 	let prevResult: unknown;
+	const blobStore = new Map<string, Blob>();
 
 	// Validate no duplicate tool names
 	const names = new Set<string>();
@@ -141,12 +197,32 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 	};
 	tools.push(sleepTool);
 
+	// Add built-in get_blob tool
+	const getBlobTool: Tool = {
+		name: 'get_blob',
+		description: 'Get raw blob data by ID. Use this to access base64 data for images/audio/PDFs that were extracted from tool results. Blobs are only available within the current execution - save to store if needed across executions.',
+		inputSchema: {type: 'object', properties: {id: {type: 'string'}}, required: ['id']},
+		async handler(args) {
+			const {id} = args as {id: string};
+			const blob = blobStore.get(id);
+			if (!blob) {
+				return {error: `Blob not found: ${id}`};
+			}
+
+			return blob;
+		},
+	};
+	tools.push(getBlobTool);
+
 	// Execute code in the sandbox
 	async function executeCode(code: string): Promise<ExecuteResult> {
 		quickJS ||= await getQuickJS();
 
 		const vm = quickJS.newContext();
 		const pendingPromises: Promise<void>[] = [];
+
+		// Clear blob store for this execution
+		blobStore.clear();
 
 		try {
 			// Add console.log
@@ -248,8 +324,11 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 						};
 						options.onToolCallSuccess?.(successEvent);
 
+						// Extract blobs from result before passing to VM
+						const transformedResult = extractBlobs(successEvent.result, blobStore);
+
 						resolveQueue = resolveQueue.then(() => {
-							const jsonStr = JSON.stringify(successEvent.result);
+							const jsonStr = JSON.stringify(transformedResult);
 							const resultHandle = vm.evalCode(`(${jsonStr})`);
 							if (resultHandle.error) {
 								const str = vm.newString(jsonStr);
@@ -275,8 +354,11 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 						};
 						options.onToolCallSuccess?.(successEvent);
 
+						// Extract blobs from result before passing to VM
+						const transformedResult = extractBlobs(successEvent.result, blobStore);
+
 						resolveQueue = resolveQueue.then(() => {
-							const jsonStr = JSON.stringify(successEvent.result);
+							const jsonStr = JSON.stringify(transformedResult);
 							const resultHandle = vm.evalCode(`(${jsonStr})`);
 							if (resultHandle.error) {
 								const str = vm.newString(jsonStr);
@@ -300,8 +382,11 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 
 						// Check if result was set (recovery)
 						if ('result' in errorEvent) {
+							// Extract blobs from recovered result before passing to VM
+							const transformedResult = extractBlobs(errorEvent.result, blobStore);
+
 							resolveQueue = resolveQueue.then(() => {
-								const jsonStr = JSON.stringify(errorEvent.result);
+								const jsonStr = JSON.stringify(transformedResult);
 								const resultHandle = vm.evalCode(`(${jsonStr})`);
 								if (resultHandle.error) {
 									const str = vm.newString(jsonStr);
@@ -343,7 +428,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 				const errorStr = typeof error === 'object' && error !== null
 					? (error as {message?: string}).message || JSON.stringify(error)
 					: String(error);
-				return {success: false, error: errorStr};
+				return {success: false, error: errorStr, blobs: Array.from(blobStore.values())};
 			}
 
 			// Poll until promise resolves
@@ -371,7 +456,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 				if (pollIterations >= maxPollIterations) {
 					promiseHandle.dispose();
 					storeHandle.dispose();
-					return {success: false, error: 'Execution timed out'};
+					return {success: false, error: 'Execution timed out', blobs: Array.from(blobStore.values())};
 				}
 			}
 
@@ -394,10 +479,11 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 						success: true,
 						result: value,
 						error: `Result truncated (${resultStr.length} > ${maxResultChars} chars)`,
+						blobs: Array.from(blobStore.values()),
 					};
 				}
 
-				return {success: true, result: value};
+				return {success: true, result: value, blobs: Array.from(blobStore.values())};
 			}
 
 			if (promiseState.type === 'rejected') {
@@ -408,12 +494,12 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 				const errorStr = typeof error === 'object' && error !== null
 					? (error as {message?: string}).message || JSON.stringify(error)
 					: String(error);
-				return {success: false, error: errorStr};
+				return {success: false, error: errorStr, blobs: Array.from(blobStore.values())};
 			}
 
 			promiseHandle.dispose();
 			storeHandle.dispose();
-			return {success: false, error: 'Promise did not resolve'};
+			return {success: false, error: 'Promise did not resolve', blobs: Array.from(blobStore.values())};
 		} finally {
 			vm.dispose();
 		}
@@ -434,8 +520,9 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 				success: {type: 'boolean'},
 				result: {description: 'Return value from the executed code'},
 				error: {type: 'string', description: 'Error message if execution failed'},
+				blobs: {type: 'array', description: 'Extracted binary blobs (images, etc.)'},
 			},
-			required: ['success'],
+			required: ['success', 'blobs'],
 		},
 		async handler(args) {
 			const {code} = args as {code: string};
