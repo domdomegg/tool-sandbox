@@ -83,6 +83,16 @@ const DEFAULT_maxResultChars = 40000;
 /** Default maximum execution time (~50 seconds) */
 const DEFAULT_MAX_POLL_ITERATIONS = 500;
 
+/** Add helpful hints to common error messages */
+function augmentErrorMessage(errorStr: string): string {
+	// setTimeout/setInterval not available - suggest sleep tool
+	if (errorStr.includes("'setTimeout' is not defined") || errorStr.includes("'setInterval' is not defined")) {
+		return `${errorStr}. Hint: Use await tool('sleep', {ms: N}) for delays.`;
+	}
+
+	return errorStr;
+}
+
 /** Generate the execute tool description */
 function generateExecuteDescription(toolNames: string[]): string {
 	return `Run JavaScript in a sandboxed environment.
@@ -446,7 +456,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 				const errorStr = typeof error === 'object' && error !== null
 					? (error as {message?: string}).message || JSON.stringify(error)
 					: String(error);
-				return {success: false, error: errorStr, blobs: Array.from(blobStore.values())};
+				return {success: false, error: augmentErrorMessage(errorStr), blobs: Array.from(blobStore.values())};
 			}
 
 			// Poll until promise resolves
@@ -512,7 +522,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 				const errorStr = typeof error === 'object' && error !== null
 					? (error as {message?: string}).message || JSON.stringify(error)
 					: String(error);
-				return {success: false, error: errorStr, blobs: Array.from(blobStore.values())};
+				return {success: false, error: augmentErrorMessage(errorStr), blobs: Array.from(blobStore.values())};
 			}
 
 			promiseHandle.dispose();

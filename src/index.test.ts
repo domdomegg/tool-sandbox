@@ -342,6 +342,14 @@ test.each(['fetch', 'require', 'setTimeout', 'setInterval'])('%s is not availabl
 	expect(result).toEqual({success: true, blobs: [], result: 'undefined'});
 });
 
+test('setTimeout error includes helpful hint about sleep tool', async () => {
+	const sandbox = await createSandbox({tools: []});
+	const result = await sandbox.execute.handler({code: 'setTimeout(() => {}, 100)'});
+	expect(result.success).toBe(false);
+	expect(result.error).toContain("'setTimeout' is not defined");
+	expect(result.error).toContain("sleep");
+});
+
 test('sandbox has expected globals', async () => {
 	const sandbox = await createSandbox({tools: []});
 	const result = await sandbox.execute.handler({
