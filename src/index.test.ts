@@ -592,3 +592,91 @@ test('blob extraction works for resource blobs (PDFs)', async () => {
 	expect(result.blobs[0].data).toBe('JVBERi0xLjQKJeLjz9MKMSAwIG9iag');
 	expect(result.blobs[0].mimeType).toBe('application/pdf');
 });
+
+test('Promise.race with tool calls works correctly', async () => {
+	// This tests that abandoned tool calls from Promise.race don't cause errors
+	const sandbox = await createSandbox({tools: []});
+
+	// Race a fast sleep against a slow sleep - fast one should win
+	const result = await sandbox.execute.handler({
+		code: `
+			const result = await Promise.race([
+				tool('sleep', {ms: 50}).then(() => 'fast'),
+				tool('sleep', {ms: 200}).then(() => 'slow')
+			]);
+			return result;
+		`,
+	});
+
+	expect(result.success).toBe(true);
+	expect(result.result).toBe('fast');
+});
+
+test('Promise.race with tool calls - abandoned promise resolves after main', async () => {
+	// More explicit test: the slow tool should still complete without error
+	// even though the main promise has already resolved
+	let slowCallCompleted = false;
+
+	const slowTool: Tool = {
+		name: 'slow_tool',
+		description: 'A slow tool for testing',
+		inputSchema: {type: 'object', properties: {}},
+		async handler() {
+			await new Promise((resolve) => setTimeout(resolve, 150));
+			slowCallCompleted = true;
+			return {done: true};
+		},
+	};
+
+	const fastTool: Tool = {
+		name: 'fast_tool',
+		description: 'A fast tool for testing',
+		inputSchema: {type: 'object', properties: {}},
+		async handler() {
+			await new Promise((resolve) => setTimeout(resolve, 10));
+			return {done: true};
+		},
+	};
+
+	const sandbox = await createSandbox({tools: [slowTool, fastTool]});
+
+	const result = await sandbox.execute.handler({
+		code: `
+			const result = await Promise.race([
+				tool('fast_tool', {}).then(() => 'fast'),
+				tool('slow_tool', {}).then(() => 'slow')
+			]);
+			return result;
+		`,
+	});
+
+	expect(result.success).toBe(true);
+	expect(result.result).toBe('fast');
+
+	// Wait for slow tool to complete
+	await new Promise((resolve) => setTimeout(resolve, 200));
+	expect(slowCallCompleted).toBe(true);
+});
+
+test('Promise.race with very slow abandoned tool does not block forever', async () => {
+	// If a tool takes a very long time and gets abandoned via Promise.race,
+	// we should not wait forever for it to complete
+	const sandbox = await createSandbox({tools: []});
+
+	const start = Date.now();
+	const result = await sandbox.execute.handler({
+		code: `
+			const result = await Promise.race([
+				tool('sleep', {ms: 10}).then(() => 'fast'),
+				tool('sleep', {ms: 50000}).then(() => 'very slow')  // 50 seconds!
+			]);
+			return result;
+		`,
+	});
+	const elapsed = Date.now() - start;
+
+	expect(result.success).toBe(true);
+	expect(result.result).toBe('fast');
+	// Should complete in well under 50 seconds - the 1 second cleanup timeout + overhead
+	expect(elapsed).toBeLessThan(3000);
+});
