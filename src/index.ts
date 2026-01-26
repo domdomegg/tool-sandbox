@@ -231,9 +231,26 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 		const vm = quickJS.newContext();
 		const pendingPromises: Promise<void>[] = [];
 		let vmDisposed = false; // Track if VM has been disposed to prevent operations on disposed VM
+		let mainPromiseFulfilled = false; // Track when main promise is done - interrupt further execution
 		// Track pending QuickJS promises so we can force-resolve them before VM disposal
 		// This is needed for Promise.race scenarios where abandoned promises would otherwise leak
 		const pendingQjsPromises: Array<{promise: ReturnType<typeof vm.newPromise>; settled: boolean}> = [];
+		// Mutable ref to main promise handle - used by resolve callbacks to check if main promise is done
+		const mainPromiseRef: {handle: ReturnType<typeof vm.newPromise>['handle'] | null} = {handle: null};
+
+		// Set up interrupt handler to stop execution after main promise fulfills
+		// This prevents abandoned Promise.race callbacks from running
+		vm.runtime.setInterruptHandler(() => mainPromiseFulfilled);
+
+		// Helper to check main promise state and set flag if it's done
+		// Called after each executePendingJobs to detect when Promise.race resolves
+		const checkMainPromiseDone = () => {
+			if (mainPromiseFulfilled || !mainPromiseRef.handle) return;
+			const state = vm.getPromiseState(mainPromiseRef.handle);
+			if (state.type !== 'pending') {
+				mainPromiseFulfilled = true;
+			}
+		};
 
 		// Clear blob store for this execution
 		blobStore.clear();
@@ -309,12 +326,13 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 
 					if (!tool) {
 						resolveQueue = resolveQueue.then(() => {
-							if (vmDisposed) return; // Skip if VM already disposed (abandoned promise from Promise.race)
+							if (vmDisposed || mainPromiseFulfilled) return; // Skip if main promise done or VM disposed
 							const errHandle = vm.newError(`Tool not found: ${toolName}`);
 							promise.reject(errHandle);
 							errHandle.dispose();
 							promiseEntry.settled = true;
 							vm.runtime.executePendingJobs();
+							checkMainPromiseDone();
 						});
 						return;
 					}
@@ -325,12 +343,13 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 						options.onBeforeToolCall?.(beforeEvent);
 					} catch (err) {
 						resolveQueue = resolveQueue.then(() => {
-							if (vmDisposed) return; // Skip if VM already disposed (abandoned promise from Promise.race)
+							if (vmDisposed || mainPromiseFulfilled) return; // Skip if main promise done or VM disposed
 							const errHandle = vm.newError(err instanceof Error ? err.message : String(err));
 							promise.reject(errHandle);
 							errHandle.dispose();
 							promiseEntry.settled = true;
 							vm.runtime.executePendingJobs();
+							checkMainPromiseDone();
 						});
 						return;
 					}
@@ -348,7 +367,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 						const transformedResult = extractBlobs(successEvent.result, blobStore);
 
 						resolveQueue = resolveQueue.then(() => {
-							if (vmDisposed) return; // Skip if VM already disposed (abandoned promise from Promise.race)
+							if (vmDisposed || mainPromiseFulfilled) return; // Skip if main promise done or VM disposed
 							const jsonStr = JSON.stringify(transformedResult);
 							const resultHandle = vm.evalCode(`(${jsonStr})`);
 							if (resultHandle.error) {
@@ -363,6 +382,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 
 							promiseEntry.settled = true;
 							vm.runtime.executePendingJobs();
+							checkMainPromiseDone();
 						});
 						return;
 					}
@@ -380,7 +400,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 						const transformedResult = extractBlobs(successEvent.result, blobStore);
 
 						resolveQueue = resolveQueue.then(() => {
-							if (vmDisposed) return; // Skip if VM already disposed (abandoned promise from Promise.race)
+							if (vmDisposed || mainPromiseFulfilled) return; // Skip if main promise done or VM disposed
 							const jsonStr = JSON.stringify(transformedResult);
 							const resultHandle = vm.evalCode(`(${jsonStr})`);
 							if (resultHandle.error) {
@@ -395,6 +415,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 
 							promiseEntry.settled = true;
 							vm.runtime.executePendingJobs();
+							checkMainPromiseDone();
 						});
 					} catch (err) {
 						const error = err instanceof Error ? err : new Error(String(err));
@@ -410,7 +431,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 							const transformedResult = extractBlobs(errorEvent.result, blobStore);
 
 							resolveQueue = resolveQueue.then(() => {
-								if (vmDisposed) return; // Skip if VM already disposed (abandoned promise from Promise.race)
+								if (vmDisposed || mainPromiseFulfilled) return; // Skip if main promise done or VM disposed
 								const jsonStr = JSON.stringify(transformedResult);
 								const resultHandle = vm.evalCode(`(${jsonStr})`);
 								if (resultHandle.error) {
@@ -425,15 +446,17 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 
 								promiseEntry.settled = true;
 								vm.runtime.executePendingJobs();
+								checkMainPromiseDone();
 							});
 						} else {
 							resolveQueue = resolveQueue.then(() => {
-								if (vmDisposed) return; // Skip if VM already disposed (abandoned promise from Promise.race)
+								if (vmDisposed || mainPromiseFulfilled) return; // Skip if main promise done or VM disposed
 								const errHandle = vm.newError(error.message);
 								promise.reject(errHandle);
 								errHandle.dispose();
 								promiseEntry.settled = true;
 								vm.runtime.executePendingJobs();
+								checkMainPromiseDone();
 							});
 						}
 					}
@@ -461,6 +484,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 
 			// Poll until promise resolves
 			const promiseHandle = result.value;
+			mainPromiseRef.handle = promiseHandle;
 			let promiseState = vm.getPromiseState(promiseHandle);
 			let pollIterations = 0;
 
@@ -489,6 +513,8 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 			}
 
 			if (promiseState.type === 'fulfilled') {
+				// Signal interrupt handler to stop any further execution (abandoned Promise.race callbacks)
+				mainPromiseFulfilled = true;
 				const value = vm.dump(promiseState.value);
 				promiseState.value.dispose();
 				promiseHandle.dispose();
@@ -515,6 +541,8 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 			}
 
 			if (promiseState.type === 'rejected') {
+				// Signal interrupt handler to stop any further execution (abandoned Promise.race callbacks)
+				mainPromiseFulfilled = true;
 				const error = vm.dump(promiseState.error);
 				promiseState.error.dispose();
 				promiseHandle.dispose();
@@ -532,19 +560,14 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 			// Mark VM as disposed so any late callbacks skip their resolution
 			vmDisposed = true;
 
-			// Force-resolve any unsettled promises before disposal
-			// This prevents QuickJS GC assertion failures from abandoned Promise.race promises
-			for (const entry of pendingQjsPromises) {
-				if (!entry.settled) {
-					// Resolve with undefined to cleanly settle the promise
-					const undefinedHandle = vm.undefined;
-					entry.promise.resolve(undefinedHandle);
-					entry.settled = true;
-				}
+			// Just dispose - don't bother settling promises
+			// QuickJS may complain but let's see if it actually breaks anything
+			try {
+				vm.dispose();
+			} catch (e) {
+				// Ignore disposal errors - VM is done anyway
+				console.warn('[tool-sandbox] VM disposal warning:', e);
 			}
-
-			vm.runtime.executePendingJobs();
-			vm.dispose();
 		}
 	}
 

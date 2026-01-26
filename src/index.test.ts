@@ -688,3 +688,25 @@ test('Promise.race with very slow abandoned tool does not block forever', async 
 	// Should complete in well under 50 seconds - the 1 second cleanup timeout + overhead
 	expect(elapsed).toBeLessThan(3000);
 });
+
+test('Promise.race abandoned promise .then() callbacks do NOT affect store', async () => {
+	// When main promise fulfills, we stop running callbacks for abandoned promises
+	// This prevents side effects from Promise.race losers
+	const sandbox = await createSandbox({tools: []});
+
+	const result = await sandbox.execute.handler({
+		code: `
+			store.modified = false;
+			const result = await Promise.race([
+				tool('sleep', {ms: 10}).then(() => 'fast'),
+				tool('sleep', {ms: 100}).then(() => { store.modified = true; return 'slow'; })
+			]);
+			return result;
+		`,
+	});
+
+	expect(result.success).toBe(true);
+	expect(result.result).toBe('fast');
+	// The slow promise's .then() should NOT have run - we exited before it completed
+	expect(sandbox.store.modified).toBe(false);
+});
