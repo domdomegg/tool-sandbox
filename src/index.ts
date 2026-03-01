@@ -86,7 +86,7 @@ const DEFAULT_MAX_POLL_ITERATIONS = 500;
 /** Add helpful hints to common error messages */
 function augmentErrorMessage(errorStr: string): string {
 	// setTimeout/setInterval not available - suggest sleep tool
-	if (errorStr.includes("'setTimeout' is not defined") || errorStr.includes("'setInterval' is not defined")) {
+	if (errorStr.includes('\'setTimeout\' is not defined') || errorStr.includes('\'setInterval\' is not defined')) {
 		return `${errorStr}. Hint: Use await tool('sleep', {ms: N}) for delays.`;
 	}
 
@@ -234,7 +234,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 		let mainPromiseFulfilled = false; // Track when main promise is done - interrupt further execution
 		// Track pending QuickJS promises so we can force-resolve them before VM disposal
 		// This is needed for Promise.race scenarios where abandoned promises would otherwise leak
-		const pendingQjsPromises: Array<{promise: ReturnType<typeof vm.newPromise>; settled: boolean}> = [];
+		const pendingQjsPromises: {promise: ReturnType<typeof vm.newPromise>; settled: boolean}[] = [];
 		// Mutable ref to main promise handle - used by resolve callbacks to check if main promise is done
 		const mainPromiseRef: {handle: ReturnType<typeof vm.newPromise>['handle'] | null} = {handle: null};
 
@@ -245,7 +245,10 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 		// Helper to check main promise state and set flag if it's done
 		// Called after each executePendingJobs to detect when Promise.race resolves
 		const checkMainPromiseDone = () => {
-			if (mainPromiseFulfilled || !mainPromiseRef.handle) return;
+			if (mainPromiseFulfilled || !mainPromiseRef.handle) {
+				return;
+			}
+
 			const state = vm.getPromiseState(mainPromiseRef.handle);
 			if (state.type !== 'pending') {
 				mainPromiseFulfilled = true;
@@ -312,7 +315,10 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 
 					if (!tool) {
 						resolveQueue = resolveQueue.then(() => {
-							if (vmDisposed || mainPromiseFulfilled) return; // Skip if main promise done or VM disposed
+							if (vmDisposed || mainPromiseFulfilled) {
+								return;
+							} // Skip if main promise done or VM disposed
+
 							const errHandle = vm.newError(`Tool not found: ${toolName}`);
 							promise.reject(errHandle);
 							errHandle.dispose();
@@ -329,7 +335,10 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 						options.onBeforeToolCall?.(beforeEvent);
 					} catch (err) {
 						resolveQueue = resolveQueue.then(() => {
-							if (vmDisposed || mainPromiseFulfilled) return; // Skip if main promise done or VM disposed
+							if (vmDisposed || mainPromiseFulfilled) {
+								return;
+							} // Skip if main promise done or VM disposed
+
 							const errHandle = vm.newError(err instanceof Error ? err.message : String(err));
 							promise.reject(errHandle);
 							errHandle.dispose();
@@ -353,7 +362,10 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 						const transformedResult = extractBlobs(successEvent.result, blobStore);
 
 						resolveQueue = resolveQueue.then(() => {
-							if (vmDisposed || mainPromiseFulfilled) return; // Skip if main promise done or VM disposed
+							if (vmDisposed || mainPromiseFulfilled) {
+								return;
+							} // Skip if main promise done or VM disposed
+
 							const jsonStr = JSON.stringify(transformedResult);
 							const resultHandle = vm.evalCode(`(${jsonStr})`);
 							if (resultHandle.error) {
@@ -386,7 +398,10 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 						const transformedResult = extractBlobs(successEvent.result, blobStore);
 
 						resolveQueue = resolveQueue.then(() => {
-							if (vmDisposed || mainPromiseFulfilled) return; // Skip if main promise done or VM disposed
+							if (vmDisposed || mainPromiseFulfilled) {
+								return;
+							} // Skip if main promise done or VM disposed
+
 							const jsonStr = JSON.stringify(transformedResult);
 							const resultHandle = vm.evalCode(`(${jsonStr})`);
 							if (resultHandle.error) {
@@ -417,7 +432,10 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 							const transformedResult = extractBlobs(errorEvent.result, blobStore);
 
 							resolveQueue = resolveQueue.then(() => {
-								if (vmDisposed || mainPromiseFulfilled) return; // Skip if main promise done or VM disposed
+								if (vmDisposed || mainPromiseFulfilled) {
+									return;
+								} // Skip if main promise done or VM disposed
+
 								const jsonStr = JSON.stringify(transformedResult);
 								const resultHandle = vm.evalCode(`(${jsonStr})`);
 								if (resultHandle.error) {
@@ -436,7 +454,10 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 							});
 						} else {
 							resolveQueue = resolveQueue.then(() => {
-								if (vmDisposed || mainPromiseFulfilled) return; // Skip if main promise done or VM disposed
+								if (vmDisposed || mainPromiseFulfilled) {
+									return;
+								} // Skip if main promise done or VM disposed
+
 								const errHandle = vm.newError(error.message);
 								promise.reject(errHandle);
 								errHandle.dispose();

@@ -300,7 +300,6 @@ test('execute tool has correct metadata', async () => {
 	expect(sandbox.execute.description).toContain('describe_tool');
 });
 
-
 test('sleep tool works', async () => {
 	const sandbox = await createSandbox({tools: []});
 
@@ -337,8 +336,8 @@ test('setTimeout error includes helpful hint about sleep tool', async () => {
 	const sandbox = await createSandbox({tools: []});
 	const result = await sandbox.execute.handler({code: 'setTimeout(() => {}, 100)'});
 	expect(result.success).toBe(false);
-	expect(result.error).toContain("'setTimeout' is not defined");
-	expect(result.error).toContain("sleep");
+	expect(result.error).toContain('\'setTimeout\' is not defined');
+	expect(result.error).toContain('sleep');
 });
 
 test('sandbox has expected globals', async () => {
@@ -620,7 +619,9 @@ test('Promise.race with tool calls - abandoned promise resolves after main', asy
 		description: 'A slow tool for testing',
 		inputSchema: {type: 'object', properties: {}},
 		async handler() {
-			await new Promise((resolve) => setTimeout(resolve, 150));
+			await new Promise((resolve) => {
+				setTimeout(resolve, 150);
+			});
 			slowCallCompleted = true;
 			return {done: true};
 		},
@@ -631,7 +632,9 @@ test('Promise.race with tool calls - abandoned promise resolves after main', asy
 		description: 'A fast tool for testing',
 		inputSchema: {type: 'object', properties: {}},
 		async handler() {
-			await new Promise((resolve) => setTimeout(resolve, 10));
+			await new Promise((resolve) => {
+				setTimeout(resolve, 10);
+			});
 			return {done: true};
 		},
 	};
@@ -652,7 +655,9 @@ test('Promise.race with tool calls - abandoned promise resolves after main', asy
 	expect(result.result).toBe('fast');
 
 	// Wait for slow tool to complete
-	await new Promise((resolve) => setTimeout(resolve, 200));
+	await new Promise((resolve) => {
+		setTimeout(resolve, 200);
+	});
 	expect(slowCallCompleted).toBe(true);
 });
 
