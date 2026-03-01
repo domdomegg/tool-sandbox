@@ -97,7 +97,7 @@ function augmentErrorMessage(errorStr: string): string {
 function generateExecuteDescription(toolNames: string[]): string {
 	return `Run JavaScript in a sandboxed environment.
 
-Available: tool(name, args), store (persistent), store._prev (last result), console.log, atob/btoa, and standard JS built-ins (JSON, Math, Date, Promise, etc.)
+Available: tool(name, args), store (persistent), store._prev (last result), atob/btoa, and standard JS built-ins (JSON, Math, Date, Promise, etc.). No logs are captured — use return to pass data back.
 
 Binary data (images, audio, PDFs) from tools is automatically extracted. Tool results containing these will have the data replaced with refs like {type: 'blob_ref', id: 'blob_k7m2x9', mimeType: 'image/png'}. The actual content is returned separately. If you need the raw base64 data (e.g., to crop, resize, or pass to another tool), use tool('get_blob', {id}) which returns {id, data, mimeType}. Note: blobs are only available within the same execution - save to store if needed later.
 
@@ -256,20 +256,6 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 		blobStore.clear();
 
 		try {
-			// Add console.log
-			const consoleObj = vm.newObject();
-			const logFn = vm.newFunction('log', (...args) => {
-				const strings = args.map((h) => {
-					const val = vm.dump(h);
-					return typeof val === 'string' ? val : JSON.stringify(val);
-				});
-				console.log('[tool-sandbox]', ...strings);
-			});
-			vm.setProp(consoleObj, 'log', logFn);
-			vm.setProp(vm.global, 'console', consoleObj);
-			logFn.dispose();
-			consoleObj.dispose();
-
 			// Add atob/btoa for base64 encoding/decoding
 			const atobFn = vm.newFunction('atob', (strHandle) => {
 				const str = vm.getString(strHandle);

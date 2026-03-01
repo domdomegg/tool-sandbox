@@ -300,15 +300,6 @@ test('execute tool has correct metadata', async () => {
 	expect(sandbox.execute.description).toContain('describe_tool');
 });
 
-test('console.log works', async () => {
-	const consoleSpy = vi.spyOn(console, 'log');
-	const sandbox = await createSandbox({tools: []});
-
-	await sandbox.execute.handler({code: 'console.log("hello", "world")'});
-
-	expect(consoleSpy).toHaveBeenCalledWith('[tool-sandbox]', 'hello', 'world');
-	consoleSpy.mockRestore();
-});
 
 test('sleep tool works', async () => {
 	const sandbox = await createSandbox({tools: []});
@@ -407,7 +398,6 @@ test('sandbox has expected globals', async () => {
 		  "WeakSet": "function",
 		  "atob": "function",
 		  "btoa": "function",
-		  "console": "object",
 		  "decodeURI": "function",
 		  "decodeURIComponent": "function",
 		  "encodeURI": "function",
