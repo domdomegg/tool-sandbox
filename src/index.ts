@@ -184,7 +184,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 	// Add built-in list_tools tool
 	const listToolsTool: Tool = {
 		name: 'list_tools',
-		description: 'List all available tools',
+		description: 'List all available tools. Returns an array of {name, description} objects.',
 		inputSchema: {type: 'object', properties: {}},
 		async handler() {
 			return tools.map((t) => ({name: t.name, description: t.description}));
