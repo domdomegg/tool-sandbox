@@ -237,6 +237,8 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 		const pendingQjsPromises: {promise: ReturnType<typeof vm.newPromise>; settled: boolean}[] = [];
 		// Mutable ref to main promise handle - used by resolve callbacks to check if main promise is done
 		const mainPromiseRef: {handle: ReturnType<typeof vm.newPromise>['handle'] | null} = {handle: null};
+		// Track in-flight tool calls for better timeout error messages
+		const inFlightToolCalls = new Set<string>();
 
 		// Set up interrupt handler to stop execution after main promise fulfills
 		// This prevents abandoned Promise.race callbacks from running
@@ -311,9 +313,11 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 				pendingQjsPromises.push(promiseEntry);
 
 				const asyncWork = (async () => {
+					inFlightToolCalls.add(toolName);
 					const tool = tools.find((t) => t.name === toolName);
 
 					if (!tool) {
+						inFlightToolCalls.delete(toolName);
 						resolveQueue = resolveQueue.then(() => {
 							if (vmDisposed || mainPromiseFulfilled) {
 								return;
@@ -334,6 +338,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 					try {
 						options.onBeforeToolCall?.(beforeEvent);
 					} catch (err) {
+						inFlightToolCalls.delete(toolName);
 						resolveQueue = resolveQueue.then(() => {
 							if (vmDisposed || mainPromiseFulfilled) {
 								return;
@@ -351,6 +356,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 
 					// Check if returnValue was set
 					if ('returnValue' in beforeEvent) {
+						inFlightToolCalls.delete(toolName);
 						const successEvent: ToolCallSuccessEvent = {
 							toolName,
 							args,
@@ -388,6 +394,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 					// Call the tool with potentially modified args
 					try {
 						const result = await tool.handler(beforeEvent.args);
+						inFlightToolCalls.delete(toolName);
 
 						const successEvent: ToolCallSuccessEvent = {
 							toolName, args, result,
@@ -419,6 +426,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 							checkMainPromiseDone();
 						});
 					} catch (err) {
+						inFlightToolCalls.delete(toolName);
 						const error = err instanceof Error ? err : new Error(String(err));
 
 						const errorEvent: ToolCallErrorEvent = {
@@ -515,7 +523,11 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 				if (pollIterations >= maxPollIterations) {
 					promiseHandle.dispose();
 					storeHandle.dispose();
-					return {success: false, error: 'Execution timed out', blobs: Array.from(blobStore.values())};
+					const inFlight = Array.from(inFlightToolCalls);
+					const error = inFlight.length > 0
+						? `Execution timed out while waiting for tool call(s): ${inFlight.join(', ')}`
+						: 'Execution timed out';
+					return {success: false, error, blobs: Array.from(blobStore.values())};
 				}
 			}
 
