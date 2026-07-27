@@ -610,7 +610,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 			required: ['success', 'blobs'],
 		},
 		async handler(args) {
-			const {code} = args as {code: string};
+			const {code} = args;
 			return executeCode(code);
 		},
 	};
