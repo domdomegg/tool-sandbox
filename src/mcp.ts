@@ -1,8 +1,75 @@
 import type {Client} from '@modelcontextprotocol/sdk/client/index.js';
-import type {Tool, JsonSchema} from './types.js';
+import type {Tool, ToolSource, JsonSchema} from './types.js';
 
 /** MCP clients keyed by prefix */
 export type McpClients = Record<string, Client>;
+
+/** The minimal slice of the MCP SDK's Client used by toolSourceFromMcpClient.
+ *  Structural on purpose: the SDK Client class has private fields, so its type
+ *  is not compatible across separately-installed copies of the SDK. */
+export type McpToolClient = {
+	callTool(params: {name: string; arguments: Record<string, unknown>}): Promise<unknown>;
+	listTools(): Promise<{tools: {name: string; description?: string | undefined; inputSchema: unknown; outputSchema?: unknown}[]}>;
+};
+
+/**
+ * A ToolSource backed by an MCP client, resolved lazily.
+ *
+ * Unlike fromMcpClients this makes no upstream requests upfront: calls are
+ * forwarded per-tool, and the upstream is only listed when the sandbox code
+ * actually asks (list_tools / describe_tool). Use it when the upstream is
+ * large or slow to list. getClient is called at most once per operation and
+ * may connect lazily; tool names are passed through unprefixed.
+ *
+ * Only tools are exposed (not prompts/resources — use fromMcpClients for those).
+ */
+export function toolSourceFromMcpClient(
+	getClient: () => Promise<McpToolClient>,
+	options?: {
+		/** Exclude tools by name from listing and calling (e.g. to prevent recursion). */
+		exclude?: (name: string) => boolean;
+	},
+): ToolSource {
+	const excluded = (name: string) => options?.exclude?.(name) ?? false;
+
+	return {
+		async call(name, args) {
+			if (excluded(name)) {
+				throw new Error(`Tool not found: ${name}`);
+			}
+
+			const client = await getClient();
+			const result = await client.callTool({name, arguments: args});
+			return extractContent(result);
+		},
+		async list() {
+			const client = await getClient();
+			const {tools} = await client.listTools();
+			return tools
+				.filter((t) => !excluded(t.name))
+				.map((t) => ({name: t.name, description: t.description}));
+		},
+		async describe(name) {
+			if (excluded(name)) {
+				return {error: `Tool not found: ${name}`};
+			}
+
+			const client = await getClient();
+			const {tools} = await client.listTools();
+			const tool = tools.find((t) => t.name === name);
+			if (!tool) {
+				return {error: `Tool not found: ${name}`};
+			}
+
+			return {
+				name: tool.name,
+				description: tool.description,
+				inputSchema: tool.inputSchema,
+				outputSchema: tool.outputSchema,
+			};
+		},
+	};
+}
 
 /** Extract content from MCP result, preferring structuredContent */
 function extractContent(result: unknown): unknown {

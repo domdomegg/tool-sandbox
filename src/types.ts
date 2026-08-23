@@ -44,9 +44,24 @@ export type ToolCallErrorEvent = {
 	result?: unknown;
 };
 
+/** A dynamic source of tools, consulted when a name is not in the static `tools` list.
+ *  Lets the sandbox forward tool calls without enumerating every tool upfront —
+ *  useful when the source is a large or slow-to-list upstream (e.g. an MCP
+ *  aggregator), where an upfront listing would cost more than the execution. */
+export type ToolSource = {
+	/** Call a tool by name. Throw to reject the call. */
+	call(name: string, args: Record<string, unknown>): Promise<unknown>;
+	/** List available tools (returned by the list_tools built-in, after the static tools). */
+	list(): Promise<{name: string; description?: string | undefined}[]>;
+	/** Describe a tool's schema (returned by the describe_tool built-in). */
+	describe(name: string): Promise<unknown>;
+};
+
 /** Options for createSandbox */
 export type SandboxOptions = {
 	tools: Tool[];
+	/** Dynamic tool source, consulted for names not in `tools`. */
+	toolSource?: ToolSource;
 	onBeforeToolCall?: (event: BeforeToolCallEvent) => void;
 	onToolCallSuccess?: (event: ToolCallSuccessEvent) => void;
 	onToolCallError?: (event: ToolCallErrorEvent) => void;

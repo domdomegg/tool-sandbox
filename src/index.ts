@@ -12,6 +12,7 @@ import type {
 
 export type {
 	Tool,
+	ToolSource,
 	SandboxOptions,
 	Sandbox,
 	ExecuteResult,
@@ -21,7 +22,9 @@ export type {
 	Blob,
 } from './types.js';
 
-export {fromMcpClients, type McpClients} from './mcp.js';
+export {
+	fromMcpClients, toolSourceFromMcpClient, type McpClients, type McpToolClient,
+} from './mcp.js';
 
 // Lazy-loaded QuickJS instance
 let quickJS: Awaited<ReturnType<typeof getQuickJS>> | null = null;
@@ -94,7 +97,10 @@ function augmentErrorMessage(errorStr: string): string {
 }
 
 /** Generate the execute tool description */
-function generateExecuteDescription(toolNames: string[]): string {
+function generateExecuteDescription(toolNames: string[], hasToolSource: boolean): string {
+	const availableTools = hasToolSource
+		? `Available tools: ${toolNames.join(', ')} — plus dynamically-resolved tools; call tool('list_tools', {}) to discover them.`
+		: `Available tools: ${toolNames.join(', ')}`;
 	return `Run JavaScript in a sandboxed environment.
 
 Available: tool(name, args), store (persistent), store._prev (last result), atob/btoa, and standard JS built-ins (JSON, Math, Date, Promise, etc.). No logs are captured — use return to pass data back.
@@ -103,7 +109,7 @@ Binary data (images, audio, PDFs) from tools is automatically extracted. Tool re
 
 IMPORTANT: Call tool('describe_tool', {name}) to get a tool's schema before using it. Do not guess schemas.
 
-Available tools: ${toolNames.join(', ')}
+${availableTools}
 
 Example (placeholder tool names - use describe_tool for actual schemas):
 
@@ -168,6 +174,10 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 			const {name} = args as {name: string};
 			const tool = tools.find((t) => t.name === name);
 			if (!tool) {
+				if (options.toolSource) {
+					return options.toolSource.describe(name);
+				}
+
 				return {error: `Tool not found: ${name}`};
 			}
 
@@ -187,7 +197,12 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 		description: 'List all available tools. Returns an array of {name, description} objects.',
 		inputSchema: {type: 'object', properties: {}},
 		async handler() {
-			return tools.map((t) => ({name: t.name, description: t.description}));
+			const staticTools = tools.map((t) => ({name: t.name, description: t.description}));
+			if (!options.toolSource) {
+				return staticTools;
+			}
+
+			return [...staticTools, ...await options.toolSource.list()];
 		},
 	};
 	tools.push(listToolsTool);
@@ -314,7 +329,18 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 
 				const asyncWork = (async () => {
 					inFlightToolCalls.add(toolName);
-					const tool = tools.find((t) => t.name === toolName);
+					let tool = tools.find((t) => t.name === toolName);
+
+					if (!tool && options.toolSource) {
+						const {toolSource} = options;
+						tool = {
+							name: toolName,
+							inputSchema: {type: 'object'},
+							async handler(handlerArgs) {
+								return toolSource.call(toolName, handlerArgs as Record<string, unknown>);
+							},
+						};
+					}
 
 					if (!tool) {
 						inFlightToolCalls.delete(toolName);
@@ -593,7 +619,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 	// Create execute tool
 	const executeTool: Sandbox['execute'] = {
 		name: 'execute',
-		description: generateExecuteDescription(tools.map((t) => t.name)),
+		description: generateExecuteDescription(tools.map((t) => t.name), options.toolSource !== undefined),
 		inputSchema: {
 			type: 'object',
 			properties: {code: {type: 'string', description: 'JavaScript code to execute'}},
@@ -630,7 +656,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 			}
 
 			tools.push(tool);
-			executeTool.description = generateExecuteDescription(tools.map((t) => t.name));
+			executeTool.description = generateExecuteDescription(tools.map((t) => t.name), options.toolSource !== undefined);
 		},
 		removeTool(name: string) {
 			const index = tools.findIndex((t) => t.name === name);
@@ -639,7 +665,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 			}
 
 			tools.splice(index, 1);
-			executeTool.description = generateExecuteDescription(tools.map((t) => t.name));
+			executeTool.description = generateExecuteDescription(tools.map((t) => t.name), options.toolSource !== undefined);
 		},
 	};
 
